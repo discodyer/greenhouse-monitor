@@ -50,3 +50,8 @@ ESP32有云端一体的全链路开发框架，支持 Arduino framework
 ## 设备与云端进行通信
 
 设备与IoT云间的通讯协议包含了MQTT，LwM2M/CoAP，HTTP/HTTP2，Modbus，OPC-UA，OPC-DA。而我们设备端与云端通讯主要用的协议是MQTT。
+
+## 技术要求
+
+需要熟悉 C/C++ 大型项目开发流程，熟悉传感器外设通信协议和驱动的实现。  
+如果使用Hi3861芯片需要同时掌握Linux开发环境搭建和开源工具链的使用。
