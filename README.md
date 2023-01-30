@@ -22,7 +22,7 @@
 集成到 SoC 中的外设包括 SDIO、SPI、I2C、GPIO、UART、ADC、PWM 和 I2S。
 
 芯片将运行基于华为开源的 LiteOS 内核的 Open Harmony 轻量系统（mini system）系统。  
-支持最新版本的 Open Harmony 3.0 LTS 或 3.1 beta 版本。  
+支持 Open Harmony 3.0 LTS 或 3.1 beta 版本。  
 
 ![润和 Hi3861 开发板](https://static.sitestack.cn/projects/openharmony-1.0-zh-cn/quick-start/figures/Hi3861-WLAN%E6%A8%A1%E7%BB%84%E5%A4%96%E8%A7%82%E5%9B%BE.png)
 
