@@ -11,6 +11,8 @@
 #include <ESP32Ticker.h>
 #include <TimeLib.h>
 #include <BH1750.h>
+#include "sensirion_common.h"
+#include "sgp30.h"
 
 String getLocalTime();
 void setup_wifi();
@@ -27,7 +29,7 @@ int getLEL();
 int getCO2();
 
 // MQTT Broker
-const char *mqtt_broker = "192.168.137.1";
+const char *mqtt_broker = "114.114.114.114"; // 你的MQTT服务器IP
 const char *topic_temp_hum = "/temperatureHumidity";
 const char *topic_soil = "/soilTemperatureHumidity";
 const char *topic_gas = "/gas";
@@ -42,39 +44,25 @@ const char *topic_lightIntensity = "/lightIntensity";
 #define equipment_token 10001
 const int mqtt_port = 1883;
 
-#define DHTPIN 6 // Digital pin connected to the DHT sensor
+#define DHTPIN 15
 #define INFRAREDPIN 7
-#define SOILPIN 4
-#define NH3PIN 5
-#define LIGHTPIN 9
-#define BUZZPIN 10
-#define FANPIN 38
-#define PUMPPINF 41
-#define PUMPPINB 42
-#define TX1PIN 39
-#define RX1PIN 40
-#define I2C_SDA 18
-#define I2C_SCL 19
-#define I2C1_SDA 16
-#define I2C1_SCL 17
+#define SOILPIN 8
+#define NH3PIN 10
+#define LELPIN 9
+#define LIGHTPIN 11
+#define FANPIN 12
+#define PUMPPINF 13
+#define PUMPPINB 14
+#define I2C_SDA 5
+#define I2C_SCL 6
 
-const char *ssid = "mqtt-test"; // 你的网络名称
-const char *password = "1234567890";       // 你的网络密码
+const char *ssid = "WIFI_SSID";      // 你的网络名称
+const char *password = "password";   // 你的网络密码
 const char *ntpServer = "ntp1.aliyun.com";
 const long gmtOffset_sec = 8 * 3600; // 东八区时区偏移量
 const int daylightOffset_sec = 0;    // 夏令时偏移量
 int infrared_state = 0;
-#define DHTTYPE DHT11 // DHT 11
-
-// 定义OLED屏幕的宽度和高度
-#define SCREEN_WIDTH 128 // OLED display width, in pixels
-#define SCREEN_HEIGHT 64 // OLED display height, in pixels
-
-#define OLED_RESET -1 // Reset pin # (or -1 if sharing Arduino reset pin)
-#define SCREEN_ADDRESS 0x3C
-
-// 创建一个OLED对象
-// Adafruit_SSD1306 display(SCREEN_WIDTH, SCREEN_HEIGHT, &Wire, OLED_RESET);
+#define DHTTYPE DHT11
 
 DHT_Unified dht(DHTPIN, DHTTYPE);
 uint32_t delayMS;
@@ -94,13 +82,33 @@ Ticker ticker_infrared;
 
 void setup()
 {
+    s16 err;
+    u32 ah = 0;
+    u16 scaled_ethanol_signal, scaled_h2_signal;
     // 初始化串口通信
     Serial0.begin(115200, SERIAL_8N1, 44, 43);
 
-    Serial1.begin(9600, SERIAL_8N1, RX1PIN, TX1PIN);
-
     Wire.begin(I2C_SDA, I2C_SCL);
-    Wire1.begin(I2C1_SDA, I2C1_SCL);
+
+    /*  Init module,Reset all baseline,The initialization takes up to around 15 seconds, during which
+        all APIs measuring IAQ(Indoor air quality ) output will not change.Default value is 400(ppm) for co2,0(ppb) for tvoc*/
+    while (sgp_probe() != STATUS_OK) {
+        Serial0.println("SGP failed");
+        while (1);
+    }
+    /*Read H2 and Ethanol signal in the way of blocking*/
+    err = sgp_measure_signals_blocking_read(&scaled_ethanol_signal,
+                                            &scaled_h2_signal);
+    if (err == STATUS_OK) {
+        Serial0.println("get ram signal!");
+    } else {
+        Serial0.println("error reading signals");
+    }
+
+    // Set absolute humidity to 13.000 g/m^3
+    //It's just a test value
+    sgp_set_absolute_humidity(13000);
+    err = sgp_iaq_init();
 
     if (lightMeter.begin(BH1750::CONTINUOUS_HIGH_RES_MODE))
     {
@@ -111,17 +119,9 @@ void setup()
         Serial0.println(F("Error initialising BH1750"));
     }
 
-    // SSD1306_SWITCHCAPVCC = generate display voltage from 3.3V internally
-    // if (!display.begin(SSD1306_SWITCHCAPVCC, SCREEN_ADDRESS))
-    // {
-    //     Serial0.println(F("SSD1306 allocation failed"));
-    //     for (;;)
-    //         ; // Don't proceed, loop forever
-    // }
-
     pinMode(INFRAREDPIN, INPUT_PULLUP);
     pinMode(SOILPIN, INPUT);
-    // pinMode(LELPIN, INPUT);
+    pinMode(LELPIN, INPUT);
     pinMode(NH3PIN, INPUT);
     // pinMode(LIGHTINTENSITYPIN, INPUT);
 
@@ -239,6 +239,8 @@ void setup_wifi()
     Serial0.println();
     Serial0.print("Connecting to ");
     Serial0.println(ssid);
+
+    WiFi.mode(WIFI_STA);
 
     WiFi.begin(ssid, password);
 
@@ -439,8 +441,8 @@ void send_gas()
     String gasCo2 = "0", gasLEL = "0", gasNH3 = "0";
     // gasCo2 = String(350 * (random(100) * 0.001 + 1));
     gasCo2 = String(getCO2());
-    // int gasLELValue = getLEL();
-    gasLEL = String(0.1 + (random(100) * 0.01));
+    int gasLELValue = analogRead(LELPIN);
+    // gasLEL = String(0.1 + (random(100) * 0.01));
     int gasNH3Value = analogRead(NH3PIN);
     gasNH3 = String(gasNH3Value);
 
@@ -476,6 +478,7 @@ void infrared_callback()
         return;
     }
     send_infrared(now_state);
+    Serial0.printf("IR_state: %d\n", now_state);
     infrared_state = now_state;
 }
 
@@ -510,77 +513,97 @@ void send_lightIntensity()
     client.publish(topic_lightIntensity, payload.c_str());
 }
 
-int getLEL()
-{
-    int gasConcentration = 0;
-    byte highByte = 0, lowByte = 0;
-    Wire1.beginTransmission(0x54);
-    Wire1.write(0xa1);
-    Wire1.endTransmission();
-    delay(10);
-    Wire1.beginTransmission(0x55);
-    // 读取高字节气体浓度
-    if (Wire1.requestFrom(0x55, 1) == 1)
-    {
-        highByte = Wire1.read();
-    }
+// int getLEL()
+// {
+//     int gasConcentration = 0;
+//     byte highByte = 0, lowByte = 0;
+//     Wire1.beginTransmission(0x54);
+//     Wire1.write(0xa1);
+//     Wire1.endTransmission();
+//     delay(10);
+//     Wire1.beginTransmission(0x55);
+//     // 读取高字节气体浓度
+//     if (Wire1.requestFrom(0x55, 1) == 1)
+//     {
+//         highByte = Wire1.read();
+//     }
 
-    // 读取低字节气体浓度
-    if (Wire1.requestFrom(0x55, 1) == 1)
-    {
-        lowByte = Wire1.read();
+//     // 读取低字节气体浓度
+//     if (Wire1.requestFrom(0x55, 1) == 1)
+//     {
+//         lowByte = Wire1.read();
 
-        // 结束信号
-        Wire1.endTransmission();
+//         // 结束信号
+//         Wire1.endTransmission();
 
-        // 组合高字节和低字节，得到完整的数据
-        gasConcentration = (highByte << 8) | lowByte;
+//         // 组合高字节和低字节，得到完整的数据
+//         gasConcentration = (highByte << 8) | lowByte;
 
-        Serial0.print("LEL: ");
-        Serial0.println(gasConcentration);
-    }
-    return gasConcentration;
-}
+//         Serial0.print("LEL: ");
+//         Serial0.println(gasConcentration);
+//     }
+//     return gasConcentration;
+// }
+
+// int getCO2()
+// {
+//     int concentration = 0;
+//     Serial1.write(0xFF);
+//     Serial1.write(0x01);
+//     Serial1.write(0x86);
+//     Serial1.write(0x00);
+//     Serial1.write(0x00);
+//     Serial1.write(0x00);
+//     Serial1.write(0x00);
+//     Serial1.write(0x00);
+//     Serial1.write(0x79);
+
+//     delay(200); // 等待传感器响应
+
+//     if (Serial1.available() >= 9)
+//     { // 检查是否有足够的数据可用
+//         byte data[9];
+//         Serial1.readBytes(data, 9); // 读取8个字节数据
+
+//         // 解析数据
+//         if (data[0] == 0xFF && data[1] == 0x86)
+//         {
+//             int highByte = data[2];
+//             int lowByte = data[3];
+//             concentration = (highByte << 8) | lowByte;
+
+//             byte checksum = 0xFF - ((data[1] + data[2] + data[3] + data[4] + data[5] + data[6] + data[7]) & 0xFF) + 1;
+
+//             if (checksum == data[8])
+//             {
+//                 Serial0.print("CO2: ");
+//                 Serial0.println(concentration);
+//             }
+//             else
+//             {
+//                 Serial0.println("Checksum error!");
+//             }
+//         }
+//     }
+//     return concentration;
+// }
 
 int getCO2()
 {
-    int concentration = 0;
-    Serial1.write(0xFF);
-    Serial1.write(0x01);
-    Serial1.write(0x86);
-    Serial1.write(0x00);
-    Serial1.write(0x00);
-    Serial1.write(0x00);
-    Serial1.write(0x00);
-    Serial1.write(0x00);
-    Serial1.write(0x79);
+    s16 err = 0;
+    u16 tvoc_ppb, co2_eq_ppm;
+    err = sgp_measure_iaq_blocking_read(&tvoc_ppb, &co2_eq_ppm);
+    if (err == STATUS_OK) {
+        // Serial.print("tVOC  Concentration:");
+        // Serial.print(tvoc_ppb);
+        // Serial.println("ppb");
 
-    delay(200); // 等待传感器响应
-
-    if (Serial1.available() >= 9)
-    { // 检查是否有足够的数据可用
-        byte data[9];
-        Serial1.readBytes(data, 9); // 读取8个字节数据
-
-        // 解析数据
-        if (data[0] == 0xFF && data[1] == 0x86)
-        {
-            int highByte = data[2];
-            int lowByte = data[3];
-            concentration = (highByte << 8) | lowByte;
-
-            byte checksum = 0xFF - ((data[1] + data[2] + data[3] + data[4] + data[5] + data[6] + data[7]) & 0xFF) + 1;
-
-            if (checksum == data[8])
-            {
-                Serial0.print("CO2: ");
-                Serial0.println(concentration);
-            }
-            else
-            {
-                Serial0.println("Checksum error!");
-            }
-        }
+        Serial0.print("CO2eq Concentration:");
+        Serial0.print(co2_eq_ppm);
+        Serial0.println("ppm");
+    } else {
+        Serial0.println("error reading IAQ values\n");
     }
-    return concentration;
+    // delay(1000);
+    return co2_eq_ppm;
 }
